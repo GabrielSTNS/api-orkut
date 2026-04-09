@@ -2,16 +2,46 @@ require("dotenv").config();
 const express = require("express");
 const pool = require("./config/db");
 const validarPost = require("./validation/post");
+const validarUsuarios = require("./validation/usuarios");
 const jwt = require("jsonwebtoken");
 const auth = require("./auth/authLogin");
+const bcrypt = require("bcrypt");
 const cors = require("cors");
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
-app.get("/", (req, res) => {
-  res.send("<h1>Rede Social!</h1>");
+function dataFormatada(data) {
+  return new Date(data).toLocaleDateString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+  });
+}
+
+// Rota de cadastro de usuário
+app.post("/usuarios", validarUsuarios, async (req, res) => {
+  try {
+    const { nome, email, senha } = req.body;
+
+    const senhaHash = await bcrypt.hash(senha, 10);
+
+    const resultado = await pool.query(
+      `
+      INSERT INTO usuarios (nome, email, senha)
+      VALUES ($1, $2, $3)
+      RETURNING *
+      `,
+      [nome, email, senhaHash],
+    );
+    res.status(201).json({
+      mensagem: "Usuário criado com sucesso.",
+      usuario: resultado.rows[0],
+    });
+  } catch (erro) {
+    res.status(500).json({
+      erro: "Erro ao criar usuário.",
+    });
+  }
 });
 
 // Rota de login
@@ -30,7 +60,10 @@ app.post("/login", async (req, res) => {
         mensagem: "Usuário não encontrado.",
       });
     }
-    if (senha !== usuario.rows[0].senha) {
+
+    const senhaValida = await bcrypt.compare(senha, usuario.rows[0].senha);
+
+    if (!senhaValida) {
       return res.status(400).json({
         mensagem: "Senha incorreta.",
       });
@@ -48,6 +81,27 @@ app.post("/login", async (req, res) => {
   }
 });
 
+app.get("/", (req, res) => {
+  res.send("<h1>Rede Social!</h1>");
+});
+
+// GET - usuários
+app.get("/usuarios", async (req, res) => {
+  try {
+    const resultado = await pool.query(
+      `
+      SELECT * FROM usuarios;
+      `,
+    );
+    res.json(resultado.rows);
+  } catch (erro) {
+    res.status(500).json({
+      erro: "Erro ao buscar usuários.",
+    });
+  }
+});
+
+// GET - postagens
 app.get("/posts", async (req, res) => {
   try {
     const resultado = await pool.query(`
@@ -62,14 +116,18 @@ app.get("/posts", async (req, res) => {
             ON post.usuario_id = usuarios.id
             ORDER BY  post.criado_em DESC
         `);
-    res.json(resultado.rows);
+
+    const dados = resultado.rows.map((post) => ({
+      ...post,
+      criado_em: dataFormatada(post.criado_em),
+    }));
+    res.json(dados);
   } catch (erro) {
     res.status(500).json({ erro: "Erro ao buscar postagens" });
   }
 });
 
-// Criando a rota POST
-
+// Rota POST
 app.post("/posts", auth, validarPost, async (req, res) => {
   try {
     const { titulo, conteudo } = req.body;
@@ -92,10 +150,31 @@ app.post("/posts", auth, validarPost, async (req, res) => {
   }
 });
 
-app.put("/posts/:id", validarPost, async (req, res) => {
+// Rota PUT
+app.put("/posts/:id", auth, validarPost, async (req, res) => {
   try {
     const { id } = req.params;
     const { titulo, conteudo } = req.body;
+
+    const post = await pool.query(
+      `
+      SELECT * FROM post WHERE id=$1
+      `,
+      [id],
+    );
+
+    if (post.rows.length === 0) {
+      return res.status(404).json({
+        mensagem: "Post não encontrado.",
+      });
+    }
+
+    if (post.rows[0].usuario_id !== req.usuario.id) {
+      return res.status(403).json({
+        mensagem: "Sem permissão.",
+      });
+    }
+
     const resultado = await pool.query(
       `
       UPDATE post SET titulo=$1, conteudo=$2 WHERE id=$3 RETURNING *`,
@@ -112,9 +191,30 @@ app.put("/posts/:id", validarPost, async (req, res) => {
   }
 });
 
-app.delete("/posts/:id", async (req, res) => {
+// Rota DELETE
+app.delete("/posts/:id", auth, async (req, res) => {
   try {
     const { id } = req.params;
+
+    const post = await pool.query(
+      `
+      SELECT * FROM post WHERE id=$1
+      `,
+      [id],
+    );
+
+    if (post.rows.length === 0) {
+      return res.status(404).json({
+        mensagem: "Post não encontrado.",
+      });
+    }
+
+    if (post.rows[0].usuario_id !== req.usuario.id) {
+      return res.status(403).json({
+        mensagem: "Sem permissão.",
+      });
+    }
+
     const resultado = await pool.query(
       `DELETE FROM post WHERE id=$1 RETURNING *`,
       [id],
