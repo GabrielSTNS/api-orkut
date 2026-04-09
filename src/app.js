@@ -108,6 +108,7 @@ app.get("/posts", async (req, res) => {
             SELECT
                 usuarios.id,
                 usuarios.nome,
+                post.titulo,
                 post.conteudo,
                 post.criado_em,
                 post.id AS post_numero
