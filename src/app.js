@@ -38,6 +38,7 @@ app.post("/usuarios", validarUsuarios, async (req, res) => {
       usuario: resultado.rows[0],
     });
   } catch (erro) {
+    console.error("Erro ao criar usuário:", erro);
     res.status(500).json({
       erro: "Erro ao criar usuário.",
     });
